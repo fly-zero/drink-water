@@ -5,6 +5,7 @@
 #include <cassert>
 
 #include <chrono>
+#include <filesystem>
 
 #include "resource.h"
 
@@ -25,7 +26,7 @@ class DrinkWater
 public:
     explicit DrinkWater(HINSTANCE hInstance);
 
-    int Run(int nCmdShow);
+    int Run(int nCmdShow, int drinkWaterInterval);
 
 protected:
     static void RegisterWindowClass(HINSTANCE hInstance, PCTCH szWindowClass);
@@ -73,7 +74,7 @@ inline DrinkWater::DrinkWater(const HINSTANCE hInstance)
     RegisterWindowClass(GetModuleHandle(nullptr), TEXT("DrinkWater"));
 }
 
-int DrinkWater::Run(int const nCmdShow)
+int DrinkWater::Run(int const nCmdShow, int const drinkWaterInterval)
 {
     auto const [windowX, windowY] = GetWindowStartPosition(WINDOW_WIDTH, WINDOW_HEIGHT);
     constexpr auto dwStyle = WS_VISIBLE | WS_POPUPWINDOW | WS_CAPTION;
@@ -130,8 +131,8 @@ int DrinkWater::Run(int const nCmdShow)
         throw SystemError("failed to create static control");
 
     // create timer
-    constexpr std::chrono::milliseconds interval{ std::chrono::minutes{ 1 } };
-    hTimer_ = SetTimer(hMainWnd_, 1, interval.count(), nullptr);
+    const std::chrono::milliseconds interval{ std::chrono::minutes{ drinkWaterInterval } };
+    hTimer_ = SetTimer(hMainWnd_, 1,  static_cast<unsigned>(interval.count()), nullptr);
 
     // set font
     SendMessage(hStaticText_, WM_SETFONT, reinterpret_cast<WPARAM>(hFont_), TRUE);
@@ -273,19 +274,43 @@ inline std::system_error DrinkWater::SystemError(const char * what)
     return { static_cast<int>(GetLastError()), std::system_category(), what };
 }
 
+// Parse drink water interval from command line
+static int ParseDrinkWaterInterval(const LPTSTR lpCmdLine)
+{
+    if (!lpCmdLine || *lpCmdLine == '\0')
+        throw std::invalid_argument("lpCmdLine is null");
+
+    auto const interval = _ttoi(lpCmdLine);
+    if (interval <= 0)
+        throw std::invalid_argument("invalid interval");
+
+    return interval;
+}
+
 int WINAPI _tWinMain(const HINSTANCE hInstance, HINSTANCE hPrevInstance, LPTSTR lpCmdLine, const int nShowCmd)
 {
     int ret;
 
     try
     {
+        auto const drinkWaterInterval = ParseDrinkWaterInterval(lpCmdLine);
         auto const drinkWater = new (&s_drinkWaterStorage) DrinkWater{ hInstance };
-        ret = drinkWater->Run(nShowCmd);
+        ret = drinkWater->Run(nShowCmd, drinkWaterInterval);
         drinkWater->~DrinkWater();
     }
-    catch (std::system_error const& e)
+    catch (std::system_error const & e)
     {
         MessageBoxA(nullptr, e.what(), "Error", MB_OK | MB_ICONERROR);
+        ret = EXIT_FAILURE;
+    }
+    catch (std::invalid_argument const &)
+    {
+        char buff[4096];
+        GetModuleFileNameA(nullptr, buff, sizeof buff);
+        auto const exe = std::filesystem::path{ buff }.filename().string();
+        [[maybe_unused]] auto const len = snprintf(buff, sizeof buff, "Usage: %s <interval in minutes>", exe.c_str());
+        assert(len > 0 && static_cast<size_t>(len) < sizeof buff);
+        MessageBoxA(nullptr, buff, "Error", MB_OK | MB_ICONERROR);
         ret = EXIT_FAILURE;
     }
 
